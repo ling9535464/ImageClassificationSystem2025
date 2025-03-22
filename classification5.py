@@ -213,7 +213,7 @@ def main():
         early_stopping = EarlyStopping(patience=10, delta=0.001)
         scaler = amp.GradScaler()
 
-        for epoch in range(100):
+        for epoch in range(50):
             #训练阶段
             model.train()
             running_loss = 0.0
