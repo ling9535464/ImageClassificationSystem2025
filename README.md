@@ -13,19 +13,14 @@
 
 #### **软件依赖**
 1. **操作系统**：支持Linux、Windows或macOS（需配置GPU驱动）。
-2. **Python版本**：Python 3.8+。
-3. **核心库**：
-   ```bash
-   # 安装PyTorch及相关库（根据CUDA版本选择）
-   pip install torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu113
-   pip install Pillow scikit-learn tensorboard
-   ```
+2. **Python版本**：Python 3.9.21。
 
 #### **关键库版本**
-- `torch >= 1.10.0`
-- `torchvision >= 0.11.0`
-- `scikit-learn >= 1.0.0`
-- `Pillow >= 8.4.0`
+- `numpy==1.19.4`
+- `opencv-python==4.4.0.40`
+- `Pillow==7.1.2`
+- `scipy==1.4.1`
+- 另有其他库，满足python版本可运行即可。
 
 ---
 
