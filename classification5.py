@@ -9,12 +9,13 @@ import torch.nn as nn
 import torch.optim as optim
 from sklearn.model_selection import train_test_split, StratifiedKFold
 import numpy as np
-from sklearn.metrics import classification_report, confusion_matrix
+from sklearn.metrics import classification_report, confusion_matrix, roc_auc_score, precision_recall_curve, auc
 from torch.utils.tensorboard import SummaryWriter
 import multiprocessing
 import torch.cuda.amp as amp
 from torch.utils.data import WeightedRandomSampler
 import torch.nn.functional as F
+import shutil
 
 
 class CustomDataset(Dataset):
@@ -184,7 +185,10 @@ def main():
     all_labels = dataset.labels
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    writer = SummaryWriter(log_dir='runs/improved_experiment')
+    log_dir = 'runs/improved_experiment'
+    if os.path.exists(log_dir):
+        shutil.rmtree(log_dir)  # 删除旧的日志目录
+    writer = SummaryWriter(log_dir=log_dir)
 
     for fold, (train_indices, val_test_indices) in enumerate(kfold.split(all_indices, all_labels)):
         print(f"Fold {fold + 1}/5")
@@ -231,11 +235,13 @@ def main():
             print(f'Epoch {epoch + 1}/50, Loss: {epoch_loss:.4f}')
             writer.add_scalar(f'Fold_{fold+1}/Loss/train', epoch_loss, epoch)
 
-            #验证阶段
+           # 验证阶段
             model.eval()
             val_loss = 0.0
             correct = 0
             y_true, y_pred = [], []
+            y_scores = []  # 用于存储预测的正类概率
+
             with torch.no_grad():
                 for images, labels in val_loader:
                     images, labels = images.to(device), labels.to(device)
@@ -243,21 +249,32 @@ def main():
                     loss = criterion(outputs, labels)
                     val_loss += loss.item() * images.size(0)
                     probabilities = torch.softmax(outputs, dim=1)
+                    y_scores.extend(probabilities[:, 1].cpu().numpy())
                     predicted = (probabilities[:, 1] > 0.15).long()
                     correct += (predicted == labels).sum().item()
                     y_true.extend(labels.cpu().numpy())
                     y_pred.extend(predicted.cpu().numpy())
+
             val_loss = val_loss / len(val_loader.dataset)
             val_accuracy = correct / len(val_loader.dataset)
             val_report = classification_report(y_true, y_pred, target_names=['normal', 'abnormal'], output_dict=True)
             val_recall_abnormal = val_report['abnormal']['recall']
+            # 计算 ROC-AUC 和 PR-AUC
+            roc_auc = roc_auc_score(y_true, y_scores)
+            precision, recall, _ = precision_recall_curve(y_true, y_scores)
+            pr_auc = auc(recall, precision)
+
             print(f'Validation Loss: {val_loss:.4f}, Accuracy: {val_accuracy:.4f}, Abnormal Recall: {val_recall_abnormal:.4f}')
+            print(f'ROC-AUC: {roc_auc:.4f}, PR-AUC: {pr_auc:.4f}')
             print("Confusion Matrix:")
             print(confusion_matrix(y_true, y_pred))
-            
+
+            # 将结果记录到 TensorBoard
             writer.add_scalar(f'Fold_{fold + 1}/Loss/val', val_loss, epoch)
             writer.add_scalar(f'Fold_{fold + 1}/Accuracy/val', val_accuracy, epoch)
             writer.add_scalar(f'Fold_{fold + 1}/Recall/abnormal', val_recall_abnormal, epoch)
+            writer.add_scalar(f'Fold_{fold + 1}/ROC-AUC/val', roc_auc, epoch)
+            writer.add_scalar(f'Fold_{fold + 1}/PR-AUC/val', pr_auc, epoch)
 
             scheduler.step(val_loss)
 
@@ -272,6 +289,8 @@ def main():
         test_loss = 0.0
         correct = 0
         y_true, y_pred = [], []
+        y_scores = []  # 用于存储预测的正类概率
+
         with torch.no_grad():
             for images, labels in test_loader:
                 images, labels = images.to(device), labels.to(device)
@@ -282,6 +301,9 @@ def main():
                 correct += (predicted == labels).sum().item()
                 y_true.extend(labels.cpu().numpy())
                 y_pred.extend(predicted.cpu().numpy())
+                # 获取预测的正类概率
+                probabilities = torch.softmax(outputs, dim=1)
+                y_scores.extend(probabilities[:, 1].cpu().numpy())
 
         test_loss = test_loss / len(test_loader.dataset)
         test_accuracy = correct / len(test_loader.dataset)
@@ -297,8 +319,13 @@ def main():
         else:
             f2_score_abnormal = 0
 
-        print(f'Test Loss: {test_loss:.4f}, Accuracy: {test_accuracy:.4f}, Abnormal Recall: {recall_abnormal:.4f}, F2-Score: {f2_score_abnormal:.4f}')
+        # 计算ROC-AUC和PR-AUC
+        roc_auc = roc_auc_score(y_true, y_scores)
+        precision, recall, _ = precision_recall_curve(y_true, y_scores)
+        pr_auc = auc(recall, precision)
 
+        print(f'Test Loss: {test_loss:.4f}, Accuracy: {test_accuracy:.4f}, Abnormal Recall: {recall_abnormal:.4f}, F1-Score: {f1_score_abnormal:.4f}, F2-Score: {f2_score_abnormal:.4f}')
+        print(f'ROC-AUC: {roc_auc:.4f}, PR-AUC: {pr_auc:.4f}')
         print("Test Classification Report:")
         print(test_report)
 
@@ -307,7 +334,9 @@ def main():
             'Precision': precision_abnormal,
             'Recall': recall_abnormal,
             'F1-Score': f1_score_abnormal,
-            'F2-Score': f2_score_abnormal
+            'F2-Score': f2_score_abnormal,
+            'ROC-AUC': roc_auc,
+            'PR-AUC': pr_auc
         }, epoch)
 
         del model, optimizer, scheduler
